@@ -1,0 +1,237 @@
+#!/bin/bash
+
+# Configuration
+jenkinsUrl="http://build-01.znx.fr"
+
+# Checks
+command -v jsawk >/dev/null 2>&1 || { echo "jsawk is required. Install from brew or go to https://github.com/micha/jsawk/" >&2; exit -1; }
+command -v perl >/dev/null 2>&1 || { echo "perl is required." >&2; exit -1; }
+token=${JENKINS_TOKEN:?"not defined. -> export JENKINS_TOKEN=\"xxx\""}
+login=${JENKINS_LOGIN:?"not defined. -> export JENKINS_LOGIN=\"xxx@zenexity.com\""}
+
+usage() {
+  echo "Usage:"
+  echo "- jenkins build PROJECT_NAME [-v]"
+  echo "- jenkins list"
+  exit -1 
+}
+
+# Check if order parameter is defined
+if [ $# -lt 1 ]; then
+  usage
+fi
+
+# Enable verbose mode ?
+if [[ $* == *-v* ]]; then
+  verbose="true"
+else
+  verbose="false"
+fi
+
+######################################################
+# Helpers functions
+######################################################
+trace() {
+  local msg="$1"
+  if [ $verbose == "true" ]; then
+    echo -e "$cyan$msg$reset"
+  fi
+}
+
+rawurlencode() {
+  local url=$1
+  echo $(perl -MURI::Escape -e 'print uri_escape($ARGV[0]);' "$url")
+}
+
+get() {
+  local url=$1
+  echo "$(curl -u $login:$token -s $url)"
+}
+
+status() {
+  local url=$1
+  echo "$(curl -u $login:$token -s -o /dev/null -I -w '%{http_code}' $url)"
+}
+
+red="\033[31m"
+reset="\033[0m"
+green="\033[32m"
+yellow="\033[33m"
+cyan="\033[36m"
+
+#####################################
+## Display logs TASK
+####################################
+log() {
+  project=$1
+  projecturi=$(rawurlencode $project)
+
+  # Get last build on this project, and check if it exists
+  lastBuildStatus=$(status "$jenkinsUrl/job/$projecturi/lastBuild/api/json")
+  if [ $lastBuildStatus -ne "200" ]; then
+    echo -ne $red; echo -e "Project $project not found $reset (Error $lastBuildStatus)"
+    exit -1
+  else
+    trace "Project $project found"
+  fi
+
+  echo "$(get $jenkinsUrl/job/$projecturi/lastBuild/consoleText)"
+}
+
+
+#####################################
+# BUILD TASK
+#####################################
+
+build() {
+
+  project=$1
+  projecturi=$(rawurlencode $project) # escape special characters
+
+  echo "Jenkins: BUILD $project"
+
+  # Get last build on this project, and check if it exists
+  lastBuildStatus=$(status "$jenkinsUrl/job/$projecturi/lastBuild/api/json")
+  if [ $lastBuildStatus -ne "200" ]; then
+    echo -ne $red; echo -e "Project $project not found $reset (Error $lastBuildStatus)"
+    exit -1
+  else
+    trace "Project $project found"
+  fi
+
+  # Check if the project is not compiling right now
+  lastBuildContent=$(get "$jenkinsUrl/job/$projecturi/lastBuild/api/json")
+  isBuilding=$(echo $lastBuildContent | jsawk 'return this.building')
+
+  if [ $isBuilding == "true" ]; then 
+    echo -ne $red; echo -e "Project is already building. $reset Please retry later"
+    exit -1
+  fi
+
+  trace "Last build #$(echo $lastBuildContent | jsawk 'return this.number') by $(echo $lastBuildContent | jsawk 'return this.actions[0].causes[0].userName'): $(echo $lastBuildContent | jsawk 'return this.result')"
+  trace "Last branch: $(echo $lastBuildContent | jsawk 'return this.actions[1].lastBuiltRevision.branch[0].name')"
+  trace ""
+
+  # Launch a new build
+  echo "Launching build..."
+  result=$(get "$jenkinsUrl/job/$projecturi/build")
+  #sleep 4
+
+  stats=$(get "$jenkinsUrl/job/$projecturi/api/json")
+  isInQueue=$(echo $stats | jsawk 'return this.inQueue')
+
+  if [ $isInQueue == "true" ]; then
+    echo -ne "Build in queue..."
+    while [ $isInQueue == "true" ]; do
+      sleep 5
+      stats=$(get "$jenkinsUrl/job/$projecturi/api/json")
+      isInQueue=$(echo $stats | jsawk 'return this.inQueue')
+      echo -ne "."
+    done;
+    echo ""
+    echo "Build started"
+    trace ""
+  fi
+
+  if [ $verbose == "true" ]; then
+    sleep 4 # pause for having branch/commit data
+  fi;
+
+  # Check if project is building
+  build=$(get "$jenkinsUrl/job/$projecturi/lastBuild/api/json")
+  isBuilding=$(echo $build | jsawk 'return this.building')
+
+  if [ $isBuilding == "false" ]; then 
+    echo -ne $red; echo -e "Project is not building $reset"
+    exit -1
+  else
+
+    if [ $verbose == "true" ]; then # If not in verbose mode, git data is now available here
+      trace "Branch: $(echo $build | jsawk 'return this.actions[1].lastBuiltRevision.branch[0].name')"
+      trace "Commit: $(echo $build | jsawk 'return this.actions[1].lastBuiltRevision.branch[0].SHA1') (experimental)"
+      trace "Url: $(echo $build | jsawk 'return this.url')"
+      trace ""
+    fi
+
+    # Wait process finish
+    echo -ne "Build in progress..."
+    while [ $isBuilding == "true" ]; do
+      sleep 5
+      build=$(get "$jenkinsUrl/job/$projecturi/lastBuild/api/json")
+      isBuilding=$(echo $build | jsawk 'return this.building')
+      echo -ne "."
+    done;
+
+    result=$(echo $build | jsawk 'return this.result')
+    echo ""
+    echo -ne "Finished with "
+
+    # Analyse result
+    case $result in
+      "SUCCESS")
+        echo -ne $green; echo -e "SUCCESS $reset"
+      ;;
+      "FAILURE")
+        echo -ne $red; echo -e "FAILURE :'( $reset Croissants !"
+        echo ""; echo ""; echo "";
+
+        echo "$(log $project | tail -n 25)"
+        echo ""
+        echo -e "\033[0;30;47mRun \033[0;34;47mjenkins log $project\033[0;30;47m to see full ouput $reset"
+      ;;
+      "ABORTED")
+        echo -ne $yellow; echo -e "ABORTED $reset"
+      ;;
+      *)
+        echo $result
+      ;;
+    esac
+
+    exit 0
+  fi
+}
+
+####################################
+## MAIN
+####################################
+
+if [ $(status $jenkinsUrl/api/json) -ne "200" ]; then
+  echo -ne "$red"; echo -ne "Invalid credentials. "; echo -ne $reset; echo "Please double check your login/token"
+  echo "Url: $jenkinsUrl"
+  echo "Login: $login"
+  echo "Token: $token"
+  echo "(Debug: try to access curl -u $login:$token $jenkinsUrl/api/json)"
+  exit -1
+fi;
+
+order=$1
+
+case $order in
+"build")
+  if [[ -z "$2" ]]; then
+    echo -ne $red; echo -e "Project not defined! $reset"
+    usage
+    exit -1
+  fi
+  build $2
+  ;;
+
+"list")
+  echo -e $(get $jenkinsUrl/api/json | jsawk 'return _(this.jobs).map(function(e) { return e.name; }).join("\\n")')
+  ;;
+
+"log")
+  if [[ -z "$2" ]]; then
+    echo -ne $red; echo -e "Project not defined! $reset"
+    usage
+    exit -1
+  fi
+  log $2
+  ;;
+
+*)
+  usage
+  ;;
+esac
+
+exit 0

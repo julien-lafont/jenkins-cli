@@ -4,26 +4,26 @@
 
 ## Usage
 
-    $ jenkins build My-Awesome-Project
-
 Build the project on Jenkins, and displays the result when the operation is complete.
 Use `-v` for verbose mode
 
-    $ jenkins list
+    $ jenkins build My-Awesome-Project
 
 List all available projects
 
-    $ jenkins log My-Awesome-Project
+    $ jenkins list
 
 Display logs of last build(ed) project
 
-    $ jenkins list *capdemat* 
+    $ jenkins log My-Awesome-Project
 
 **TODO** Search over projects
 
-    $ jenkins checkout My-Awesome-Project new-git-branch
+    $ jenkins list *capdemat* 
 
 **TODO** Alter git branch on the fly
+
+    $ jenkins checkout My-Awesome-Project new-git-branch
 
 ## Prerequisites
 

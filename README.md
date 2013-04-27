@@ -34,7 +34,7 @@ Required dependencies
 
 ## Installation
 
-Set your Jenkins credentials. The token is accessible in [your account](http://build-01.znx.fr/user/JLA@zenexity.com/configure).
+Set your Jenkins credentials. The token is accessible in your account.
 
     export JENKINS_LOGIN="xxx@zenexity.com"
     export JENKINS_TOKEN="xxxxxxxxxxxxxxxxxxxxxxxxxxx"

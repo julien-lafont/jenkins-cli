@@ -34,7 +34,7 @@ Required dependencies
 
 ## Installation
 
-Set your Jenkins credentials. The token is accessible in your account.
+Set your Jenkins credentials (~/.bash_profile || ~/.zshrc)
 
     export JENKINS_LOGIN="xxx@zenexity.com"
     export JENKINS_TOKEN="xxxxxxxxxxxxxxxxxxxxxxxxxxx"
